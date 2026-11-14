@@ -281,7 +281,7 @@ main:focus {
 .side-philosophy > span {
   font-family: Georgia, serif;
   font-size: 54px;
-  color: #83985a;
+  color: #647d3f;
   display: block;
   margin-bottom: 7px;
 }
@@ -415,7 +415,7 @@ main:focus {
 }
 .topbar i {
   font-style: normal;
-  color: #9aa58e;
+  color: #5b6b4c;
 }
 .topbar b {
   font-weight: 500;
@@ -1618,7 +1618,7 @@ input[type="range"] {
 }
 .summary-metrics b > i {
   font-style: normal;
-  color: #70894e;
+  color: #4f663b;
   font-size: 21px;
   margin: 0 12px;
 }
