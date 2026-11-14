@@ -65,6 +65,32 @@ test("corrupted identifiers and truthy strings cannot turn an unfinished draft i
   assert.equal(sessionValid(misleadingCompletion, ids), false);
 });
 
+test("restored feedback rejects injected verdicts and malformed display fields", () => {
+  const validFeedback = {
+    verdict: "supported",
+    feedback: "The answer distinguishes force from stress.",
+    quote: "Stress is force divided by area.",
+    source: "local-ai",
+  };
+  const valid = newSession("stress", "local-ai");
+  valid.responses[0].feedback = validFeedback;
+  assert.equal(sessionValid(valid, ids), true);
+  for (const patch of [
+    { verdict: 'supported" onclick="alert(1)' },
+    { verdict: "<script>alert(1)</script>" },
+    { verdict: "__proto__" },
+    { verdict: true },
+    { feedback: { html: "<img src=x>" } },
+    { quote: ["untrusted", "array"] },
+    { warning: { message: "invalid object" } },
+    { source: "unreviewed-remote-source" },
+  ]) {
+    const restored = newSession("stress", "local-ai");
+    restored.responses[0].feedback = { ...validFeedback, ...patch };
+    assert.equal(sessionValid(restored, ids), false, JSON.stringify(patch));
+  }
+});
+
 test("the learner advances only after checking an answer, including a wrong answer with an explanation", () => {
   const session = newSession("stress");
   session.phase = "review";

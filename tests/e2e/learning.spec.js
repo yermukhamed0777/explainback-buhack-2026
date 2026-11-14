@@ -51,6 +51,17 @@ test("guided practice teaches after every answer and completes all checks and th
   await page.getByTestId("finish-session").click();
   await expect(page.getByTestId("summary")).toBeVisible();
   await expect(page.getByTestId("summary")).toContainText(/stress|strain/i);
+  await page
+    .getByRole("button", { name: "Explore another concept", exact: true })
+    .click();
+  await expect(page.getByTestId("mode-reviewed")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(page.getByTestId("mode-ai")).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
 });
 
 test("live feedback arrives without hiding the correct lesson answer", async ({
@@ -157,6 +168,13 @@ test("blocked browser storage does not make completion claim that progress was s
   await expect(page.getByTestId("summary")).toBeVisible();
   await expect(page.getByTestId("summary")).toContainText(
     /not saved|unavailable|kept on this page/i,
+  );
+  await page.getByRole("button", { name: /^Learning cards/ }).click();
+  await expect(page.getByText("Not saved", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: /^Open card/ }).click();
+  await expect(page.getByTestId("summary")).toBeVisible();
+  await expect(page.getByTestId("summary")).toContainText(
+    "This card is not saved to browser storage.",
   );
 });
 

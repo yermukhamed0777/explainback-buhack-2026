@@ -80,7 +80,7 @@ $env:RUN_LOCAL_AI_SMOKE = '1'
 node --test tests/coach.test.js
 ```
 
-During development, real GPT-OSS feedback on a vague stress answer identified the missing area relationship; a correct answer received a located quote. Observed short feedback calls took roughly 4–6 seconds on the development machine. Timing and educational quality remain model- and hardware-dependent; fixture tests do not establish general assessment accuracy.
+During development, real GPT-OSS feedback on a vague stress answer identified the missing area relationship; a correct answer received a located quote. Observed short smoke-test calls took roughly 4–6 seconds; browser calls were sometimes substantially slower. The reviewed explanation appears immediately, and local feedback has a 45-second inference deadline. Timing and educational quality remain model- and hardware-dependent; fixture tests do not establish general assessment accuracy.
 
 ## Architecture and hosting
 
