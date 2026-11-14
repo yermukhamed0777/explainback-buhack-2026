@@ -1,5 +1,16 @@
 {
-  "name": "explainback", "version": "0.1.0", "private": true, "type": "module",
+  "name": "explainback",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
   "description": "BUHack 2.0 — turn false confidence into demonstrated understanding",
-  "scripts": {"dev": "node scripts/serve.mjs", "test": "node --test", "check": "node --check dist/app.js && node --check dist/engine.js && node --check dist/lessons.js && node --check scripts/serve.mjs"}
+  "scripts": {
+    "dev": "node scripts/serve.mjs",
+    "test": "node --test",
+    "check": "node --check dist/app.js && node --check dist/engine.js && node --check dist/lessons.js && node --check scripts/serve.mjs && node --check scripts/coach.mjs"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.92",
+    "ai": "^7.0.173"
+  }
 }
