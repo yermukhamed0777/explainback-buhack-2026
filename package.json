@@ -1,0 +1,5 @@
+{
+  "name": "explainback", "version": "0.1.0", "private": true, "type": "module",
+  "description": "BUHack 2.0 — turn false confidence into demonstrated understanding",
+  "scripts": {"dev": "node scripts/serve.mjs", "test": "node --test", "check": "node --check dist/app.js && node --check dist/engine.js"}
+}
