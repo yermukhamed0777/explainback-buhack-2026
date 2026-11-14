@@ -8,6 +8,8 @@ The problem: a student can feel familiar with a concept without being able to ex
 
 ## The learning loop
 
+The mechanics flagship now offers **belief-driven investigations**. A stiffness/strength belief suggests that investigation directly; the student confirms or changes it, predicts before seeing the result, explores a fictional material counterexample, rebuilds the explanation, and receives a transfer case for the chosen concept. Ambiguous or unsupported beliefs get explicit choices, not a fabricated diagnosis. Topic matching is transparent and local. The full three-idea lesson remains available as an alternative.
+
 1. **Believe:** capture an explanation and a confidence rating.
 2. **Test:** answer one reviewed question in your own words.
 3. **Understand:** immediately see the correct explanation, reasoning, worked example, and common trap. Local AI adds short feedback on the actual answer alongside this content.
@@ -31,6 +33,12 @@ Default inference endpoint: `http://127.0.0.1:11434/v1`. `LOCAL_AI_BASE_URL` and
 
 ## A short demo story
 
+For submission, use the [full video narration and screen cues](submission/VIDEO-SCRIPT.md), [paste-ready project text](submission/SUBMISSION-TEXT.md), and [judge guide and checklist](submission/JUDGE-GUIDE-AND-CHECKLIST.md). The current official video rule is **under three minutes**; the prepared narration is about 305 words. Record an actual local model response and verify the final upload's duration and playback.
+
+For the focused flagship demonstration, follow [the 90-second walkthrough](DEMO.md). Its stiffness example uses equal rod dimensions and independent modulus/failure limits: stiffer A fails at 1,500 N while less-stiff B remains intact at 2,000 N. The linear-elastic teaching model stops at each limit and never extrapolates extension after failure. A separate transfer case uses different fictional materials and a new force.
+
+The following is the retained full-lesson alternative:
+
 Choose **Stress & strain**, try the sample misconception, and rate confidence high. For the first question, explain why unchanged force would mean unchanged stress. The reviewed answer immediately shows why area matters; Pip can point out the missing relationship. Move the area slider from 1 to 2 cm²: the same 100 N pull now produces half the stress.
 
 Complete the quick check, then test stiffness versus strength and permanent deformation after yield. Rewrite an explanation to capture the correction. Finish the transfer case and download the learning card. It records what you initially thought, the reviewed reasoning, optional rewrites, objective check results, and self-reported confidence.
@@ -44,6 +52,8 @@ Pip sends **one answer and its specific question/criterion** to GPT-OSS for shor
 Evidence is scoped to the current answer. A quote from another response cannot support it. A missing or fabricated support quote downgrades the response and produces a visible warning, rather than breaking the lesson. Finding a quote proves that it exists, not that the model's interpretation is correct. The reviewed answer and objective checks remain independent of the model.
 
 GPT-OSS also assisted development. A bounded coding review recommended dynamic lesson bounds, explicit warnings for evidence downgrades, clear evidence provenance, and avoiding answer-content logs. Those suggestions were reviewed and incorporated. The model was not given filesystem, terminal, or deployment tools.
+
+For the next milestone, **Hermes with GPT-OSS 20B wrote `dist/materials.js` and its initial tests using file tools only**. The tutor itself still has no tools. Parent review corrected an invalid extra-argument test and strict modulus validation, added missing calculation/immutability checks, and independently ran the tests before integration. Hermes had no Git or terminal tools in that bounded coding task and did not commit or push.
 
 ## Reliability, privacy, and security
 
@@ -89,6 +99,8 @@ During development, real GPT-OSS feedback on a vague stress answer identified th
 - `dist/lessons.js`: reviewed teaching, worked examples, and checks.
 - `dist/session.js`, `storage.js`: testable state and persistence boundaries.
 - `dist/labs.js`: interactive illustrative counterexamples and calculations.
+- `dist/materials.js`: reviewed fictional material calculations, initially authored by Hermes/GPT-OSS.
+- `dist/investigations.js`, `focus-views.js`: confirmed topic routing, recorded predictions, counterexamples, and concept-specific transfer cases.
 - `scripts/coach.mjs`: structured local feedback and evidence validation.
 - `scripts/serve.mjs`: loopback static server and same-origin API.
 

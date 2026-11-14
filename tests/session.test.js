@@ -5,6 +5,9 @@ import {
   sessionValid,
   advance,
   resultSummary,
+  reviewCount,
+  startReviewRound,
+  canRetryReview,
 } from "../dist/session.js";
 import { lessons } from "../dist/lessons.js";
 
@@ -26,6 +29,103 @@ test("a new session survives a JSON draft round-trip without losing the learning
   assert.equal(restored.belief, session.belief);
   assert.equal(restored.responses[0].answer, session.responses[0].answer);
   assert.equal(restored.phase, "review");
+});
+
+test("new edited answers share the three-round budget, while a retry preserves its snapshot", () => {
+  const session = newSession("stress", "local-ai");
+  const response = session.responses[0];
+  assert.equal(reviewCount(response), 0);
+  assert.equal(
+    startReviewRound(response, "The first answer is reviewed."),
+    true,
+  );
+  assert.equal(response.attempt, 1);
+  response.reviewState = "complete";
+  assert.equal(
+    startReviewRound(response, "An edited answer gets a second round."),
+    true,
+  );
+  assert.equal(response.attempt, 2);
+  response.reviewState = "failed";
+  assert.equal(canRetryReview(response), true);
+  assert.equal(
+    startReviewRound(
+      response,
+      "A different text cannot replace the retry snapshot.",
+      { retry: true },
+    ),
+    true,
+  );
+  assert.equal(response.attempt, 2);
+  assert.equal(
+    response.feedbackAnswer,
+    "An edited answer gets a second round.",
+  );
+  response.reviewState = "complete";
+  assert.equal(
+    startReviewRound(response, "A rewrite gets the third round.", {
+      revision: true,
+    }),
+    true,
+  );
+  assert.equal(response.attempt, 3);
+  response.reviewState = "complete";
+  assert.equal(
+    startReviewRound(response, "A fourth new answer must not call the model."),
+    false,
+  );
+  assert.equal(response.reviewState, "capped");
+  assert.equal(canRetryReview(response), false);
+  assert.equal(
+    startReviewRound(response, "No cap bypass through retry.", { retry: true }),
+    false,
+  );
+  // Exhausting coaching never blocks the independent learning check.
+  response.checked = true;
+  advance(session);
+  assert.equal(session.phase, "answer");
+  assert.equal(session.step, 1);
+});
+
+test("skipped or interrupted third rounds can retry, including older v2 drafts", () => {
+  for (const state of ["skipped", "pending", undefined]) {
+    const response = newSession("stress").responses[0];
+    response.attempt = 3;
+    response.feedbackAnswer = "The original snapshot is kept.";
+    if (state === undefined) delete response.reviewState;
+    else response.reviewState = state;
+    assert.equal(reviewCount(response), 3);
+    assert.equal(
+      startReviewRound(response, "A replacement text must not be reviewed.", {
+        retry: true,
+      }),
+      true,
+    );
+    assert.equal(response.attempt, 3);
+    assert.equal(response.feedbackAnswer, "The original snapshot is kept.");
+  }
+  const legacy = newSession("stress").responses[0];
+  delete legacy.reviewState;
+  assert.equal(reviewCount(legacy), 0);
+  legacy.feedback = { verdict: "partial", feedback: "An earlier review." };
+  assert.equal(reviewCount(legacy), 1);
+});
+
+test("restored review snapshots reject malformed content and flags without rejecting old v2 drafts", () => {
+  const legacy = newSession("stress");
+  for (const response of legacy.responses) delete response.reviewState;
+  assert.equal(sessionValid(legacy, ids), true);
+  for (const patch of [
+    { feedbackAnswer: { toString: "corrupted" } },
+    { feedbackAnswer: "x".repeat(2001) },
+    { feedbackForRevision: "false" },
+    { revising: {} },
+    { reviewState: "unlimited" },
+  ]) {
+    const corrupt = newSession("stress", "local-ai");
+    Object.assign(corrupt.responses[0], patch);
+    assert.equal(sessionValid(corrupt, ids), false);
+  }
 });
 
 test("restored drafts reject unsupported lessons, phases, and invalid controls", () => {
@@ -131,4 +231,39 @@ test("the learning summary uses objective checks rather than an AI verdict as pr
   assert.equal(result.transferPassed, true);
   assert.equal(result.checks[1].passed, false);
   assert.equal(result.checks[2].passed, false);
+});
+
+test("a confirmed investigation starts at the relevant criterion and finishes after its single check", () => {
+  const session = newSession("stress");
+  session.focus = "stiffness";
+  session.step = 1;
+  session.phase = "predict";
+  assert.equal(sessionValid(session, ids), true);
+  session.prediction = { choice: 0, checked: true };
+  session.phase = "review";
+  session.responses[1].choice = 2;
+  session.responses[1].checked = true;
+  advance(session);
+  assert.equal(session.phase, "transfer");
+  session.transferChoice = 1;
+  session.transferChecked = true;
+  const summary = resultSummary(session, lessons[0]);
+  assert.equal(summary.total, 1);
+  assert.equal(summary.passed, 1);
+  assert.equal(summary.checks[0].index, 1);
+  assert.equal(summary.transferPassed, true);
+});
+test("restored focused sessions reject mismatched criteria and invalid predictions", () => {
+  const session = newSession("stress");
+  session.focus = "stiffness";
+  session.step = 0;
+  assert.equal(sessionValid(session, ids), false);
+  session.step = 1;
+  session.prediction = { choice: 3, checked: true };
+  assert.equal(sessionValid(session, ids), false);
+  session.prediction = { choice: null, checked: true };
+  assert.equal(sessionValid(session, ids), false);
+  session.prediction = { choice: 0, checked: false };
+  session.lessonId = "economics";
+  assert.equal(sessionValid(session, ids), false);
 });

@@ -10,7 +10,14 @@ import {
   historyView,
   aboutView,
 } from "./views.js";
-import { newSession, sessionValid, advance, resultSummary } from "./session.js";
+import {
+  newSession,
+  sessionValid,
+  advance,
+  resultSummary,
+  reviewCount,
+  startReviewRound,
+} from "./session.js";
 import {
   readStored,
   writeStored,
@@ -18,6 +25,13 @@ import {
   appendHistory,
 } from "./storage.js";
 import { labView } from "./labs.js";
+import { routeView, predictionView } from "./focus-views.js";
+import {
+  investigations,
+  investigationFor,
+  transferFor,
+  activeIndices,
+} from "./investigations.js";
 
 const app = document.querySelector("#app");
 const draftKey = "explainback-draft-v2";
@@ -48,7 +62,8 @@ function validHistory(h) {
     h.title.length <= 200 &&
     Number.isInteger(h.passed) &&
     h.passed >= 0 &&
-    h.passed <= 3 &&
+    (h.total === undefined || [1, 3].includes(h.total)) &&
+    h.passed <= (h.total || 3) &&
     [h.confidence, h.finalConfidence].every(
       (n) => Number.isInteger(n) && n >= 1 && n <= 5,
     ) &&
@@ -71,7 +86,7 @@ const ui = {
   error: "",
   storageWarning: "",
   restored: !!session,
-  lab: {},
+  lab: { ...investigationFor(session || {})?.initialLab },
 };
 let active = null,
   clock = null,
@@ -110,7 +125,10 @@ function render(focus = false) {
   else if (ui.page === "about") content = aboutView();
   else if (!session || ui.studio) content = home(ui, lessons, session);
   else if (session.phase === "belief") content = beliefView(session, lesson);
-  else if (session.phase === "answer") content = answerView(session, lesson);
+  else if (session.phase === "route") content = routeView(session);
+  else if (session.phase === "predict") content = predictionView(session);
+  else if (session.phase === "answer")
+    content = answerView(session, lesson, ui);
   else if (session.phase === "review")
     content = reviewView(session, lesson, ui);
   else if (session.phase === "transfer")
@@ -161,6 +179,8 @@ async function checkConnection() {
 
 function stopFeedback() {
   if (active) {
+    if (active.response.reviewState === "pending")
+      active.response.reviewState = "skipped";
     active.controller.abort();
     active = null;
   }
@@ -170,17 +190,26 @@ function stopFeedback() {
   ui.elapsed = 0;
 }
 
-async function askPip(revision = false) {
+async function askPip(revision = false, retry = false) {
   stopFeedback();
   const source = session,
     index = source.step,
     response = source.responses[index];
-  const answer = revision ? response.revision : response.answer;
-  const request = { controller: new AbortController(), id: source.id, index };
+  const currentAnswer = revision ? response.revision : response.answer;
+  if (!startReviewRound(response, currentAnswer, { revision, retry })) {
+    ui.error = "";
+    persistDraft();
+    render();
+    return;
+  }
+  const answer = response.feedbackAnswer;
+  const request = {
+    controller: new AbortController(),
+    id: source.id,
+    index,
+    response,
+  };
   active = request;
-  response.feedback = null;
-  response.feedbackAnswer = answer;
-  response.feedbackForRevision = revision;
   response.revising = revision;
   ui.busy = true;
   ui.elapsed = 0;
@@ -209,6 +238,7 @@ async function askPip(revision = false) {
         answer,
         attempt: response.attempt,
         initialExplanation: source.belief,
+        ...(source.focus ? { investigationId: source.focus } : {}),
       }),
     });
     const data = await result.json();
@@ -229,8 +259,10 @@ async function askPip(revision = false) {
     )
       return;
     response.feedback = data;
+    response.reviewState = "complete";
   } catch (error) {
     if (active !== request || request.controller.signal.aborted) return;
+    response.reviewState = "failed";
     ui.error =
       error.name === "TimeoutError"
         ? "Pip took too long to respond."
@@ -256,13 +288,14 @@ function saveCompleted() {
   snapshot.persisted = true;
   const entry = {
     id: session.id,
-    title: lesson.title,
+    title: investigationFor(session)?.title || lesson.title,
     lessonId: lesson.id,
     date: session.completedAt || new Date().toISOString(),
     mode: session.mode,
     confidence: session.confidence,
     finalConfidence: session.finalConfidence,
     passed: result.passed,
+    total: result.total,
     transferPassed: result.transferPassed,
     session: snapshot,
   };
@@ -291,11 +324,21 @@ function downloadCard() {
     `${session.mode === "local-ai" ? "Local GPT-OSS coaching" : "Reviewed lesson mode"} · A learning record, not a grade.`,
     "",
     `Confidence before: ${session.confidence}/5. After: ${session.finalConfidence}/5.`,
-    `Quick checks: ${result.passed}/3. Transfer: ${result.transferPassed ? "correct" : "reviewed"}.`,
+    `Quick checks: ${result.passed}/${result.total}. Transfer: ${result.transferPassed ? "correct" : "reviewed"}.`,
     "",
     "WHAT I THOUGHT",
     session.belief,
-    ...lesson.steps.flatMap((step, index) => {
+    ...(session.focus && session.prediction?.checked
+      ? [
+          "",
+          "MY PREDICTION",
+          investigationFor(session).options[session.prediction.choice],
+          "OBSERVED COUNTEREXAMPLE",
+          investigationFor(session).outcome,
+        ]
+      : []),
+    ...activeIndices(session).flatMap((index) => {
+      const step = lesson.steps[index];
       const response = session.responses[index];
       return [
         "",
@@ -319,8 +362,8 @@ function downloadCard() {
     }),
     "",
     "TRANSFER",
-    lesson.transfer.question,
-    lesson.transfer.explanation,
+    transferFor(session, lesson).question,
+    transferFor(session, lesson).explanation,
     "",
     "AI feedback is formative and can misinterpret an answer. Lesson content is prepared; consult course materials for authoritative guidance.",
   ].join("\n");
@@ -447,6 +490,55 @@ app.addEventListener("click", (event) => {
   }
   if (!session) return;
   const response = session.responses[session.step];
+  if (action === "choose-investigation") {
+    const chosen = investigations.find((item) => item.id === value);
+    if (!chosen || session.lessonId !== "stress") return;
+    stopFeedback();
+    session.focus = chosen.id;
+    session.step = chosen.index;
+    session.prediction = { choice: null, checked: false };
+    session.phase = "predict";
+    ui.lab = {};
+    ui.error = "";
+    persistDraft();
+    render(true);
+    return;
+  }
+  if (action === "change-investigation") {
+    stopFeedback();
+    session.focus = null;
+    session.step = 0;
+    session.phase = "route";
+    persistDraft();
+    render(true);
+    return;
+  }
+  if (action === "route-full") {
+    session.focus = null;
+    session.step = 0;
+    session.phase = "answer";
+    persistDraft();
+    render(true);
+    return;
+  }
+  if (action === "prediction-option" && session.phase === "predict") {
+    session.prediction.choice = Number(value);
+    persistDraft();
+    render();
+    return;
+  }
+  if (
+    action === "reveal-prediction" &&
+    session.phase === "predict" &&
+    session.prediction.choice !== null
+  ) {
+    session.prediction.checked = true;
+    session.phase = "answer";
+    ui.lab = { ...investigationFor(session).initialLab };
+    persistDraft();
+    render(true);
+    return;
+  }
   if (action === "confidence" || action === "final-confidence") {
     session[action === "confidence" ? "confidence" : "finalConfidence"] =
       Number(value);
@@ -469,7 +561,7 @@ app.addEventListener("click", (event) => {
     return;
   }
   if (action === "retry-feedback") {
-    askPip(response.feedbackForRevision === true);
+    askPip(response.feedbackForRevision === true, true);
     return;
   }
   if (action === "checkpoint-option" && !response.checked) {
@@ -528,6 +620,11 @@ app.addEventListener("click", (event) => {
   }
   if (action === "lab-choice") {
     ui.lab.chosen = Number(value);
+    renderLab();
+    return;
+  }
+  if (action === "lab-force") {
+    ui.lab.force = Number(value);
     renderLab();
     return;
   }
@@ -619,7 +716,7 @@ function bindInputs() {
         return;
       }
       session.belief = input.value.trim();
-      session.phase = "answer";
+      session.phase = session.lessonId === "stress" ? "route" : "answer";
       ui.restored = false;
       persistDraft();
       render(true);
@@ -638,7 +735,7 @@ function bindInputs() {
       }
       const response = session.responses[session.step];
       response.answer = input.value.trim();
-      response.feedback = null;
+      if (session.mode !== "local-ai") response.feedback = null;
       response.checked = false;
       response.choice = null;
       session.phase = "review";
@@ -660,9 +757,8 @@ function bindInputs() {
         input.reportValidity();
         return;
       }
-      if (response.attempt >= 3 || ui.busy) return;
+      if (reviewCount(response) >= 3 || ui.busy) return;
       response.revision = input.value.trim();
-      response.attempt++;
       response.revised = true;
       persistDraft();
       askPip(true);

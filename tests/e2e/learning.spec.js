@@ -23,6 +23,7 @@ async function begin(page, mode = "reviewed") {
   await page.getByTestId("start-session").click();
   await page.getByTestId("belief-input").fill(belief);
   await page.getByTestId("begin-practice").click();
+  await page.getByTestId("route-full").click();
   await expect(page.getByTestId("answer-input")).toBeVisible();
 }
 
@@ -219,4 +220,38 @@ test("a tutor started after page load can be reconnected without losing the page
   await page.getByTestId("reconnect-ai").click();
   await expect(page.getByTestId("mode-ai")).toBeEnabled();
   expect(checks).toBeGreaterThan(1);
+});
+
+test("editing answers cannot exceed three review rounds or block the reviewed lesson", async ({
+  page,
+}) => {
+  let modelCalls = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/coach") modelCalls++;
+  });
+  await begin(page, "local-ai");
+  for (let round = 0; round < 3; round++) {
+    await page
+      .getByTestId("answer-input")
+      .fill(`${answers[0]} Review round ${round + 1}.`);
+    await page.getByTestId("submit-answer").click();
+    await expect(page.getByTestId("feedback-card")).toContainText(
+      "Compare your reasoning",
+    );
+    await page
+      .getByRole("button", { name: "Edit my answer", exact: true })
+      .click();
+  }
+  await page
+    .getByTestId("answer-input")
+    .fill(`${answers[0]} An edited fourth answer.`);
+  await page.getByTestId("submit-answer").click();
+  await expect(page.getByTestId("review-limit")).toBeVisible();
+  await expect(page.getByTestId("feedback-retry")).toHaveCount(0);
+  await expect(page.getByTestId("canonical-answer")).toBeVisible();
+  expect(modelCalls).toBe(3);
+  await page.getByTestId("checkpoint-option-1").click();
+  await page.getByTestId("check-understanding").click();
+  await page.getByTestId("next-step").click();
+  await expect(page.getByTestId("answer-input")).toBeVisible();
 });

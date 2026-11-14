@@ -27,6 +27,61 @@ test("feedback input targets one authored question and one answer", () => {
   assert.equal(result.lesson.id, "stress");
 });
 
+test("focused feedback rejects investigation context from a different question or lesson", () => {
+  assert.equal(
+    validateInput({ ...input, questionIndex: 1, investigationId: "stiffness" })
+      .index,
+    1,
+  );
+  for (const fields of [
+    { investigationId: "stiffness" },
+    { investigationId: "unknown" },
+    { investigationId: null },
+    { lessonId: "probability", investigationId: "area" },
+  ]) {
+    assert.throws(
+      () => validateInput({ ...input, ...fields }),
+      /investigation must match/,
+    );
+  }
+});
+
+test("focused coaching receives the fictional counterexample and its physical limits", async () => {
+  const answer =
+    "Young's modulus measures the initial slope, while strength is a separate failure limit.";
+  const coach = createCoach({
+    generate: async ({ prompt }) => {
+      const context = JSON.parse(prompt.slice(prompt.indexOf("\n") + 1));
+      assert.equal(context.fictionalMaterials[0].youngGPa, 200);
+      assert.equal(context.fictionalMaterials[0].strengthMPa, 150);
+      assert.equal(context.fictionalMaterials[1].strengthMPa, 300);
+      assert.match(
+        context.investigation,
+        /stiffer but reaches its failure limit first/,
+      );
+      assert.match(
+        context.modelAssumptions,
+        /Do not calculate an elastic extension for a failed rod/,
+      );
+      assert.equal(context.currentAnswer, answer);
+      return {
+        output: {
+          ...feedback(),
+          quote: "strength is a separate failure limit",
+        },
+      };
+    },
+  });
+  const result = await coach.respond({
+    ...input,
+    questionIndex: 1,
+    investigationId: "stiffness",
+    answer,
+  });
+  assert.equal(result.criterionIndex, 1);
+  assert.equal(result.evidenceSource, "answer");
+});
+
 test("unsupported actions, unknown lessons, invalid attempts, and answer bounds are rejected", () => {
   assert.throws(
     () => validateInput({ ...input, action: "report" }),

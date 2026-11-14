@@ -1,6 +1,8 @@
 import { generateText, Output, jsonSchema } from "ai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { lessons } from "../dist/lessons.js";
+import { investigations } from "../dist/investigations.js";
+import { MATERIALS } from "../dist/materials.js";
 
 export class CoachError extends Error {
   constructor(message, status = 400) {
@@ -40,6 +42,16 @@ export function validateInput(input) {
   ) {
     throw new CoachError("Choose a valid question number.");
   }
+  if (
+    input.investigationId !== undefined &&
+    !investigations.some(
+      (item) =>
+        item.id === input.investigationId &&
+        lesson.id === "stress" &&
+        item.index === index,
+    )
+  )
+    throw new CoachError("The investigation must match this lesson question.");
   if (!isText(input.answer, 10, 2000)) {
     throw new CoachError("Write an answer of 10–2000 characters.");
   }
@@ -172,6 +184,20 @@ export function createCoach({
         ? { reasoning: step.why, workedExample: step.workedExample }
         : {}),
       referenceNote: lesson.notes[criterion.note].text,
+      ...(input.investigationId
+        ? {
+            investigation: investigations.find(
+              (item) => item.id === input.investigationId,
+            ).outcome,
+            ...(input.investigationId === "stiffness"
+              ? {
+                  fictionalMaterials: MATERIALS,
+                  modelAssumptions:
+                    "Same original area 10 mm² and length 1000 mm. Idealized linear-elastic to failure, no yielding model. Stress=force/area in MPa. At 2000 N material A has reached its 150 MPa limit, while B is below its 300 MPa limit. Do not calculate an elastic extension for a failed rod.",
+                }
+              : {}),
+          }
+        : {}),
       currentAnswer: input.answer,
     };
     const system = [
