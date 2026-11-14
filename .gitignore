@@ -5,3 +5,6 @@ node_modules/
 *.zip
 .sites/
 .DS_Store
+test-results/
+playwright-report/
+.local/

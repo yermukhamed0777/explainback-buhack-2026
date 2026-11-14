@@ -1,46 +1,225 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import {createCoach,validateInput,validateReport} from '../scripts/coach.mjs';
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  createCoach,
+  validateInput,
+  validateFeedback,
+} from "../scripts/coach.mjs";
 
-const input={action:'report',lessonId:'stress',explanation:'Stress is force divided by original cross-sectional area.',questions:['What happens when the area doubles?','What does the slope tell us about a material?','What happens after the yield point?'],answers:['The stress halves at the same force.','A steeper slope means greater stiffness, not necessarily strength.','Plastic deformation leaves a permanent change in length.']};
-const item=(covered,evidence='')=>({covered,evidence,feedback:'Check the lesson notes to confirm the reasoning.'});
-const report=()=>({initial:[item(true,'Stress is force divided by original cross-sectional area.'),item(false),item(false)],final:[item(true,'The stress halves at the same force.'),item(true,'greater stiffness, not necessarily strength'),item(true,'Plastic deformation leaves a permanent change in length.')],summary:'You clarified stiffness and plastic deformation in your later answers.'});
+const input = {
+  action: "feedback",
+  lessonId: "stress",
+  questionIndex: 0,
+  answer:
+    "Stress is force divided by area, so twice the area means half the stress.",
+  attempt: 1,
+};
+const feedback = () => ({
+  verdict: "supported",
+  feedback:
+    "You linked stress to both force and area and applied the inverse relationship.",
+  quote: "twice the area means half the stress",
+});
 
-test('live reports validate all three criteria and real evidence',()=>{
-  assert.equal(validateInput(input).index,3);
-  assert.equal(validateReport(report(),input).final.length,3);
+test("feedback input targets one authored question and one answer", () => {
+  const result = validateInput(input);
+  assert.equal(result.index, 0);
+  assert.equal(result.lesson.id, "stress");
 });
-test('fabricated evidence is rejected instead of presented to the learner',()=>{
-  const bad=report();bad.final[0].evidence='A sentence the student never wrote.';
-  assert.throws(()=>validateReport(bad,input),/quoted excerpt/);
+
+test("unsupported actions, unknown lessons, invalid attempts, and answer bounds are rejected", () => {
+  assert.throws(
+    () => validateInput({ ...input, action: "report" }),
+    /feedback action/,
+  );
+  assert.throws(
+    () => validateInput({ ...input, lessonId: "unknown" }),
+    /prepared lessons/,
+  );
+  assert.throws(
+    () => validateInput({ ...input, questionIndex: 3 }),
+    /question number/,
+  );
+  assert.throws(
+    () => validateInput({ ...input, attempt: 0 }),
+    /three feedback attempts/,
+  );
+  assert.throws(
+    () => validateInput({ ...input, attempt: 4 }),
+    /three feedback attempts/,
+  );
+  assert.throws(
+    () => validateInput({ ...input, answer: "          " }),
+    /10–2000/,
+  );
+  assert.throws(
+    () => validateInput({ ...input, answer: "a".repeat(2001) }),
+    /10–2000/,
+  );
+  assert.throws(
+    () => validateInput({ ...input, initialExplanation: {} }),
+    /4000 characters/,
+  );
 });
-test('missing or wrongly typed criteria are rejected',()=>{
-  const missing=report();missing.final.pop();assert.throws(()=>validateReport(missing,input),/criterion/);
-  const wrong=report();wrong.final[0].covered='yes';assert.throws(()=>validateReport(wrong,input),/invalid feedback/);
+
+test("real current-answer excerpts retain explicit provenance without a numerical grade", async () => {
+  const coach = createCoach({ generate: async () => ({ output: feedback() }) });
+  const result = await coach.respond(input);
+  assert.equal(result.verdict, "supported");
+  assert.equal(result.quote, "twice the area means half the stress");
+  assert.equal(result.evidenceSource, "answer");
+  assert.equal(result.criterionIndex, 0);
+  assert.equal(result.source, "local-ai");
+  assert.equal(result.model, "gpt-oss:20b");
+  assert.equal("score" in result, false);
 });
-test('uncovered criteria do not require invented quotations',()=>{
-  const empty=report();empty.final=Array.from({length:3},()=>item(false));
-  assert.equal(validateReport(empty,input).final[0].covered,false);
+
+test("quotes from an initial explanation cannot support the current answer", async () => {
+  const quote = "The initial slope measures stiffness, not strength.";
+  const coach = createCoach({
+    generate: async () => ({ output: { ...feedback(), quote } }),
+  });
+  const result = await coach.respond({ ...input, initialExplanation: quote });
+  assert.equal(result.verdict, "partial");
+  assert.equal(result.quote, "");
+  assert.match(result.warning, /did not match this answer/);
 });
-test('malformed histories and oversized explanations never reach the model',()=>{
-  assert.throws(()=>validateInput({...input,answers:[]}),/incomplete/);
-  assert.throws(()=>validateInput({...input,lessonId:'unknown'}),/lesson/);
-  assert.throws(()=>validateInput({...input,explanation:'a'.repeat(4001)}),/4000/);
-  assert.throws(()=>validateInput({...input,action:'question',questionIndex:-1}),/question number/);
+
+test("a fabricated quote downgrades the verdict with an explicit warning", () => {
+  const result = validateFeedback(
+    { ...feedback(), quote: "A sentence that was never written." },
+    input.answer,
+  );
+  assert.equal(result.verdict, "partial");
+  assert.equal(result.quote, "");
+  assert.match(result.warning, /No mastery claim/);
+  assert.doesNotMatch(result.feedback, /correctly|great job|well done/i);
 });
-test('the local coach cannot be configured to send student work off-device',()=>{
-  assert.throws(()=>createCoach({baseURL:'https://example.com/v1'}),/loopback/);
+
+test("supported requires a quote; uncertain feedback can honestly omit one", () => {
+  assert.equal(
+    validateFeedback({ ...feedback(), quote: "" }, input.answer).verdict,
+    "partial",
+  );
+  const result = validateFeedback(
+    {
+      verdict: "revisit",
+      feedback: "Check how area changes stress at fixed force.",
+      quote: "",
+    },
+    input.answer,
+  );
+  assert.equal(result.verdict, "revisit");
+  assert.equal(result.warning, undefined);
 });
-test('live result scores come from model assessments and keep authored note references',async()=>{
-  const coach=createCoach({generate:async()=>({output:report()})});
-  const result=await coach.respond(input);
-  assert.equal(result.source,'local-ai');assert.equal(result.score,100);assert.equal(result.initialScore,33);
-  assert.deepEqual(result.criteria.map(c=>c.note),[0,1,2]);
-  assert.equal(result.criteria[1].evidence,'greater stiffness, not necessarily strength');
+
+test("quote checks tolerate typographical whitespace and punctuation without accepting another response", () => {
+  const result = validateFeedback(
+    { ...feedback(), quote: "cross-sectional area" },
+    "Stress depends on cross‑sectional   area at fixed force.",
+  );
+  assert.equal(result.verdict, "supported");
 });
-test('a question request sends only its preceding conversation and returns live provenance',async()=>{
-  let called=false;
-  const coach=createCoach({generate:async options=>{called=true;assert.match(options.prompt,/criterion 2/);assert.match(options.prompt,/The stress halves/);assert.match(options.prompt,/referenceQuestion/);assert.match(options.prompt,/self-contained/);return {output:{question:'How would you distinguish stiffness from strength in this situation?'}};}});
-  const result=await coach.respond({...input,action:'question',questionIndex:1,questions:input.questions.slice(0,1),answers:input.answers.slice(0,1)});
-  assert.ok(called);assert.equal(result.model,'gpt-oss:20b');assert.equal(result.source,'local-ai');
+
+test("malformed model objects are rejected before rendering", () => {
+  for (const invalid of [
+    null,
+    {},
+    { ...feedback(), verdict: "100%" },
+    { ...feedback(), feedback: 3 },
+    { ...feedback(), quote: "a".repeat(241) },
+  ]) {
+    assert.throws(
+      () => validateFeedback(invalid, input.answer),
+      /worked answer is still available/,
+    );
+  }
 });
+
+test("the prompt isolates the answer and supplies the exact reviewed question and criterion", async () => {
+  const coach = createCoach({
+    generate: async (options) => {
+      assert.match(options.prompt, /If you double the cross-sectional area/);
+      assert.match(options.prompt, /Stress relates force to area/);
+      assert.match(options.prompt, /currentAnswer/);
+      assert.doesNotMatch(options.prompt, /earlier unrelated explanation/);
+      assert.match(
+        options.system,
+        /Mere keywords or vague statements are insufficient/,
+      );
+      assert.match(
+        options.system,
+        /never from a reference or earlier explanation/,
+      );
+      assert.equal(options.maxRetries, 0);
+      assert.equal(options.maxOutputTokens, 420);
+      return { output: feedback() };
+    },
+  });
+  await coach.respond({
+    ...input,
+    initialExplanation: "earlier unrelated explanation",
+  });
+});
+
+test("only loopback HTTP inference endpoints are accepted", () => {
+  for (const baseURL of [
+    "https://example.com/v1",
+    "http://example.com/v1",
+    "http://user:secret@127.0.0.1/v1",
+    "http://127.0.0.1/v1?key=test",
+  ]) {
+    assert.throws(() => createCoach({ baseURL }), /loopback/);
+  }
+});
+
+test("status detects a model started later without requiring a new coach instance", async () => {
+  let available = false;
+  const coach = createCoach({
+    fetchModels: async () => ({
+      ok: true,
+      json: async () => ({ data: available ? [{ id: "gpt-oss:20b" }] : [] }),
+    }),
+  });
+  assert.equal((await coach.status()).available, false);
+  available = true;
+  assert.equal((await coach.status()).available, true);
+});
+
+test("caller cancellation reaches the model operation", async () => {
+  const controller = new AbortController();
+  let begin;
+  const started = new Promise((resolve) => {
+    begin = resolve;
+  });
+  const coach = createCoach({
+    generate: async ({ abortSignal }) => {
+      begin();
+      await new Promise((resolve, reject) =>
+        abortSignal.addEventListener(
+          "abort",
+          () => reject(abortSignal.reason),
+          { once: true },
+        ),
+      );
+    },
+  });
+  const pending = coach.respond(input, controller.signal);
+  const rejected = assert.rejects(pending, /cancelled by learner/);
+  await started;
+  controller.abort(new Error("cancelled by learner"));
+  await rejected;
+});
+
+test(
+  "optional real Ollama feedback smoke test",
+  { skip: process.env.RUN_LOCAL_AI_SMOKE !== "1", timeout: 55000 },
+  async () => {
+    const result = await createCoach().respond(input);
+    assert.equal(result.source, "local-ai");
+    assert.equal(result.criterionIndex, 0);
+    assert.ok(["supported", "partial", "revisit"].includes(result.verdict));
+    assert.ok(result.feedback.length > 0);
+    assert.equal("score" in result, false);
+  },
+);

@@ -6,11 +6,23 @@
   "description": "BUHack 2.0 — turn false confidence into demonstrated understanding",
   "scripts": {
     "dev": "node scripts/serve.mjs",
-    "test": "node --test",
-    "check": "node --check dist/app.js && node --check dist/engine.js && node --check dist/lessons.js && node --check scripts/serve.mjs && node --check scripts/coach.mjs"
+    "test": "node --test tests/*.test.js",
+    "check": "node scripts/check.mjs && eslint . && prettier --check .",
+    "test:e2e": "playwright test",
+    "format": "prettier --write ."
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.92",
     "ai": "^7.0.173"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.65.1",
+    "eslint": "^10.15.0",
+    "globals": "^17.14.0",
+    "prettier": "^3.10.1"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

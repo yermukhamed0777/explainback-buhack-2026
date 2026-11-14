@@ -1,121 +1,677 @@
-import {lessons} from './lessons.js';
-import {evaluate, calibration} from './engine.js';
+import { lessons } from "./lessons.js";
+import {
+  shell,
+  home,
+  beliefView,
+  answerView,
+  reviewView,
+  transferView,
+  summaryView,
+  historyView,
+  aboutView,
+} from "./views.js";
+import { newSession, sessionValid, advance, resultSummary } from "./session.js";
+import {
+  readStored,
+  writeStored,
+  removeStored,
+  appendHistory,
+} from "./storage.js";
+import { labView } from "./labs.js";
 
-const icons = {
-  book:'<path d="M4 4h6a3 3 0 0 1 3 3v14a4 4 0 0 0-4-3H4z"/><path d="M20 4h-4a3 3 0 0 0-3 3v14a4 4 0 0 1 4-3h3z"/>',
-  chart:'<path d="M4 4v16h16M8 15v-4m5 4V7m5 8v-6"/>',
-  spark:'<path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5z"/>',
-  arrow:'<path d="M5 12h14m-5-5 5 5-5 5"/>',
-  check:'<path d="m5 12 4 4L19 6"/>',
-  leaf:'<path d="M19 4C9 2 3 8 6 14s15 3 13-10ZM6 20l9-11"/>',
-  back:'<path d="M19 12H5m5-5-5 5 5 5"/>',
-  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
-  info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v1"/>'
-};
-const icon = (name,cls='')=>`<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name]||icons.spark}</svg>`;
-const escape = value=>String(value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
-let history=[];
-try {const stored=JSON.parse(localStorage.getItem('explainback-history')||'[]'); if(Array.isArray(stored)) history=stored.filter(x=>lessons.some(l=>l.id===x.lesson)&&Number.isFinite(x.score)&&Number.isFinite(x.confidence)&&typeof x.date==='string').slice(0,30);}catch{}
-let state={page:'practice',lesson:lessons[0].id,confidence:3,stage:0,explanation:'',answers:[],questions:[],question:0,report:null,transfer:null,transferChecked:false,saved:false,mode:'offline',busy:false,error:''};
-let availability={available:false,checking:true};
-let activeRequest=null;
-const live=()=>state.mode==='local-ai';
-const sessionQuestions=()=>state.questions.length?state.questions:lesson().questions;
-const lesson=()=>lessons.find(item=>item.id===state.lesson);
-const selectedLesson=()=>lesson();
-const root=document.querySelector('#app');
-
-function sidebar(){return `<aside class="sidebar"><a class="brand" href="#" data-action="home"><span class="brand-mark">${icon('book')}</span>ExplainBack<span class="brand-dot">.</span></a><div class="workspace-label">YOUR LEARNING SPACE</div><nav aria-label="Main navigation">${[['practice','book','Practice'],['progress','chart','My progress'],['about','spark','How it works']].map(([page,glyph,title])=>`<button class="nav-item ${state.page===page?'active':''}" data-action="nav" data-page="${page}" ${state.page===page?'aria-current="page"':''}>${icon(glyph)}${title}${page==='practice'?'<span class="nav-dot"></span>':''}</button>`).join('')}</nav><div class="sidebar-note"><span class="small-leaf">${icon('leaf')}</span><h3>Understanding grows<br>when you explain.</h3><p>You don’t need perfect words.<br>Just start with what you know.</p><span class="note-line"></span></div><div class="sidebar-footer"><span class="avatar">Y</span><div><b>Your personal workspace</b><small>Saved on this browser</small></div></div></aside>`;}
-function topbar(){return `<header class="topbar"><div class="breadcrumb">Your workspace <span>/</span> <b>${state.page==='practice'?'Practice':state.page==='progress'?'My progress':'How it works'}</b></div><div class="top-right"><button class="mode mode-switch" data-action="toggle-mode" ${state.stage>0||!availability.available||state.busy?'disabled':''} title="${availability.available?'Switch between local AI and offline practice before a session':'Live AI is available in the local app when Ollama is running'}"><span></span> ${availability.checking?'Checking tutor…':live()?'Live AI · local':'Offline demo'}</button><span class="event-tag">BUHACK 2.0</span></div></header>`;}
-function render(focus=true){root.innerHTML=`${sidebar()}<div class="content">${topbar()}<main id="main" tabindex="-1">${state.error?errorBanner():''}${state.busy?busyPage():state.page==='progress'?progressPage():state.page==='about'?aboutPage():state.stage===0?homePage():sessionPage()}</main><footer class="footer"><span>Less memorizing. More understanding.</span><span>Built for curious minds <span class="footer-star">✳</span></span></footer></div>`;bind();if(focus)document.querySelector('#main').focus({preventScroll:true});}
-
-function homePage(){const l=lesson();return `
-  <div class="eyebrow">A LITTLE CURIOSITY GOES A LONG WAY</div>
-  <div class="page-heading"><div><h1>Make it make sense<span>.</span></h1><p>The best way to understand something? Try teaching it.</p></div><span class="hand-note">Your next lightbulb moment ↙</span></div>
-  <section class="hero" aria-label="Learn by teaching"><div class="hero-copy"><span class="hero-label">MEET YOUR NEW STUDY HABIT</span><h2>You know it.<br>But can you <em>explain it?</em></h2><p>Teach a concept to a curious classmate.<br>Find the gaps. Build understanding that sticks.</p><div class="hero-pills"><span>${icon('clock')} 5–6 minutes</span><span>${icon('check')} No pressure, just progress</span></div></div><div class="hero-art" aria-hidden="true"><span class="art-orbit orbit-one"></span><span class="art-orbit orbit-two"></span><span class="art-spark spark-one">✳</span><span class="art-spark spark-two">✦</span><div class="art-bubble bubble-top">“Wait, why is that?”</div><div class="art-card"><div class="mini-dots"><i></i><i></i><i></i></div><span class="art-subtitle">THE MOMENT IT CLICKS</span><svg viewBox="0 0 220 112"><path d="M15 95H205M30 99V10" fill="none" stroke="#c4cbb5"/><path d="M31 88Q65 88 87 69T130 56T177 19" fill="none" stroke="#41604a" stroke-width="3" stroke-linecap="round"/><circle cx="177" cy="19" r="6" fill="#e4a566"/><path d="m64 38 6 6 13-14" fill="none" stroke="#7d9760" stroke-width="3"/></svg><div class="art-line"></div><span class="art-caption">Confidence → understanding</span></div><div class="art-bubble bubble-bottom">Ohh. Now I get it. <span>✦</span></div></div></section>
-  <div class="section-heading"><div><span class="step-label">01 / PICK YOUR STARTING POINT</span><h2>What are we learning today?</h2></div><span class="quiet">3 bite-sized lessons</span></div>
-  <div class="lesson-grid">${lessons.map(item=>`<button data-action="lesson" data-id="${item.id}" class="lesson-card ${state.lesson===item.id?'selected':''}" aria-pressed="${state.lesson===item.id}"><div class="lesson-top"><span class="subject-icon ${item.color}">${item.symbol}</span><span class="radio-dot"></span></div><span class="subject">${item.subject}</span><h3>${item.title}</h3><p>${item.short}</p><div class="lesson-bottom">${icon('clock')} ${item.duration}<span>Beginner friendly</span></div></button>`).join('')}</div>
-  <section class="confidence-section"><div class="confidence-copy"><span class="step-label">02 / CHECK IN WITH YOURSELF</span><h2>How well do you know this?</h2><p>A gut feeling is enough. We’ll come back to it later.</p></div><div class="confidence-control"><div class="rating" role="group" aria-label="Initial confidence, from 1 to 5">${[1,2,3,4,5].map(n=>`<button data-action="confidence" data-value="${n}" class="rating-button ${state.confidence===n?'chosen':''}" aria-pressed="${state.confidence===n}" aria-label="${n} of 5: ${['Just getting started','A little familiar','Somewhat confident','Pretty confident','Could teach it'][n-1]}">${n}</button>`).join('')}</div><div class="rating-labels"><span>Just getting started</span><span>Could teach it</span></div><div class="confidence-selected">${['Let’s discover something new.','A good place to build from.','Some pieces are falling into place.','Let’s put that confidence to work.','Time to share what you know.'][state.confidence-1]}</div></div></section>
-  <div class="start-row"><span>${icon('info')} Your first explanation doesn’t have to be right.</span><button class="button primary" data-action="start">Let’s explain it ${icon('arrow')}</button></div>
-  <div class="method-strip"><span>THE EXPLAINBACK LOOP</span><b>Explain</b><i>→</i><b>Explore the gaps</b><i>→</i><b>Apply what clicks</b><span class="method-end">Small steps. Deeper learning.</span></div>
-  <p class="prototype-note">${live()?'Prepared lessons · Live follow-up questions · Feedback from your local GPT-OSS model':'Prepared lessons · Authored questions · Rule-based feedback · No live AI in offline mode'}</p>`;}
-
-function notes(l){return `<aside class="notes-panel"><div class="notes-heading">${icon('book')} YOUR LESSON NOTES</div><h3>${l.title}</h3><p class="notes-intro">A reference, not a script. Put these ideas into your own words.</p>${l.notes.map((note,i)=>`<details ${state.stage===1&&i===0?'open':''}><summary><span>0${i+1}</span>${note.title}</summary><p>${escape(note.text)}</p></details>`).join('')}<div class="notes-bottom">${icon('leaf')} Getting stuck is part of learning.</div></aside>`;}
-function stepper(){const step=state.stage;return `<div class="session-steps" aria-label="Session progress">${['Explain','Explore','Reflect','Apply'].map((title,i)=>`<div class="session-step ${step===i+1?'current':''} ${step>i+1?'done':''}"><span>${step>i+1?'✓':i+1}</span>${title}</div>`).join('<i></i>')}</div>`;}
-function sessionPage(){const l=selectedLesson();return `<div class="session-header"><button class="text-button" data-action="leave">${icon('back')} Back to lessons</button><span class="session-subject">${l.subject} <span> / </span> ${l.title}</span></div>${stepper()}${state.stage===3?reportPage(l):state.stage===4?transferPage(l):`<div class="session-grid"><section class="session-main">${state.stage===1?explainPage(l):questionPage(l)}</section>${notes(l)}</div>`}<dialog id="leave-dialog"><h2>Leave this practice?</h2><p>Your unfinished answers will be cleared. You can also stay and keep going.</p><div class="dialog-actions"><button class="button secondary" data-action="cancel-leave">Keep practicing</button><button class="button primary" data-action="confirm-leave">Leave practice</button></div></dialog>`;}
-function explainPage(l){return `<span class="eyebrow">START WITH WHAT YOU KNOW</span><h1>Your words.<br>Your understanding.</h1><p class="lead">${l.intro}</p><div class="classmate"><span class="classmate-avatar">✳</span><div><b>Meet Pip, your curious classmate</b><p>“I’m new to this. Can you explain the concept simply, and give me an example?”</p></div></div><form id="explanation-form"><label class="input-label" for="explanation">Teach it back to Pip</label><textarea id="explanation" name="explanation" minlength="30" maxlength="4000" required placeholder="Here’s how I understand it…">${escape(state.explanation)}</textarea><div class="input-meta"><span>Try an idea, a reason, and an example.</span><span id="char-count">${state.explanation.length}/4000</span></div><div class="form-actions"><button type="button" class="text-button sample-button" data-action="sample">Try a misconception example</button><button type="submit" class="button primary">Explore my understanding ${icon('arrow')}</button></div></form><p class="prototype-note">${live()?'Pip uses your local GPT-OSS model. Your explanation stays on this computer.':'Pip uses prepared questions in offline mode.'}</p>`;}
-function questionPage(l){return `<span class="eyebrow">A GOOD QUESTION OPENS A DOOR</span><h1>Let’s go a little deeper<span>.</span></h1><p class="lead">Question ${state.question+1} of 3. Think it through; the notes are here if you need them.</p><div class="classmate question"><span class="classmate-avatar">✳</span><div><b>Pip is curious…</b><p>${escape(sessionQuestions()[state.question])}</p></div></div><form id="answer-form"><label class="input-label" for="answer">What would you tell Pip?</label><textarea id="answer" name="answer" minlength="10" maxlength="2000" required placeholder="I think that’s because…">${escape(state.answers[state.question]||'')}</textarea><div class="input-meta"><span>Not sure? Say where you’re stuck.</span><span>${state.question+1} / 3</span></div><div class="form-actions"><button class="text-button" type="button" data-action="previous">${icon('back')} Previous</button><button type="submit" class="button primary">${state.question===2?'See my learning report':'Next question'} ${icon('arrow')}</button></div></form><details class="your-explanation"><summary>Your first explanation</summary><p>${escape(state.explanation)}</p></details>`;}
-function reportPage(l){const r=state.report;const c=calibration(state.confidence,r.initialScore);const count=r.criteria.filter(x=>x.covered).length;return `<div class="report-heading"><span class="eyebrow">THE GAPS ARE WHERE GROWTH STARTS</span><h1>A little clearer already<span>.</span></h1><p class="lead">Here’s what your latest follow-up answers showed for ${l.title.toLowerCase()}.</p></div><section class="calibration-card"><div><span class="step-label">YOUR CONFIDENCE CHECK</span><h2>${c.label}</h2><p>${c.description}</p><span class="report-disclaimer">${r.source==='local-ai'?'AI feedback can be wrong. Review the quoted evidence and lesson notes; this is not a grade.':'A phrase-based estimate, not a grade. Review the evidence below.'}</span></div><div class="comparison"><div><span>Initial confidence</span><div class="bar-track"><div class="bar-fill confidence-bar" style="width:${(state.confidence-1)*25}%"></div></div><b>${state.confidence}/5</b></div><div><span>Initial rubric coverage</span><div class="bar-track"><div class="bar-fill evidence-bar" style="width:${r.initialScore}%"></div></div><b>${r.initialScore}%</b></div></div></section><div class="growth-note">${icon('leaf')} After exploring: <b>${r.score}% rubric coverage</b><span>Initial explanation: ${r.initialScore}% → Follow-up answers: ${r.score}%</span></div><div class="report-grid"><section><div class="section-heading"><h2>What the rubric found</h2><span class="quiet">${count} of 3 ideas covered</span></div>${r.criteria.map((item,i)=>`<article class="finding ${item.covered?'covered':'revisit'}"><span class="finding-symbol">${item.covered?'✓':'↗'}</span><div><span class="finding-label">${item.covered?'EVIDENCE FOUND':'WORTH ANOTHER LOOK'}</span><h3>${item.label}</h3><p>${escape(item.feedback||(item.covered?'Your latest answer included language matching this criterion. Check the note to confirm your reasoning.':item.correction))}</p>${item.evidence?`<blockquote class="student-evidence">“${escape(item.evidence)}”<cite>From your explanation or follow-up answers</cite></blockquote>`:''}<details><summary>See the lesson evidence</summary><p>${escape(l.notes[item.note].text)}</p><small>Prepared lesson note ${item.note+1} · ${l.notes[item.note].title}</small></details></div></article>`).join('')}</section><aside class="reflection-panel"><span class="subject-icon ${l.color}">${icon('leaf')}</span><h2>Understanding is<br>a work in progress.</h2><p>${escape(r.summary||(r.misconceptions.length?'Some language in your answers matched a common misconception:':'A missing match can mean an uncovered idea or simply wording our prototype didn’t recognize.'))}</p>${r.misconceptions.map(m=>`<p class="misconception">${escape(m.text)}</p>`).join('')}<hr><h3>One more small step</h3><p>Try a new situation. Can you use the idea beyond the example you just explained?</p><button class="button primary" data-action="transfer">Try the transfer check ${icon('arrow')}</button></aside></div><details class="transcript"><summary>Review your explanation and answers</summary><h3>Your initial explanation</h3><p>${escape(state.explanation)}</p>${sessionQuestions().map((q,i)=>`<h3>${escape(q)}</h3><p>${escape(state.answers[i])}</p>`).join('')}</details><p class="prototype-note">${r.source==='local-ai'?'Live local AI reviewed all three criteria. Later corrections take priority over earlier mistakes. Quotes are checked against your responses, but the assessment can still be wrong.':'Each follow-up checks one criterion and replaces the initial explanation for that criterion. Phrase matches can miss nuance; inspect the notes before drawing conclusions.'}</p>`;}
-function transferPage(l){const t=l.transfer;const correct=state.transfer===t.answer;return `<div class="transfer-wrap"><span class="eyebrow">TAKE YOUR UNDERSTANDING SOMEWHERE NEW</span><h1>One last “what if?”<span></span></h1><p class="lead">A different situation. The same big idea.</p><section class="transfer-card"><span class="subject">${l.subject} / TRANSFER CHECK</span><h2>${t.question}</h2><div class="transfer-options" role="group" aria-label="Choose your answer">${t.options.map((option,i)=>`<button class="transfer-option ${state.transfer===i?'selected':''} ${state.transferChecked&&i===t.answer?'correct':''} ${state.transferChecked&&state.transfer===i&&!correct?'incorrect':''}" data-action="option" data-index="${i}" aria-pressed="${state.transfer===i}" ${state.transferChecked?'disabled':''}><span>${String.fromCharCode(65+i)}</span>${escape(option)}${state.transferChecked&&i===t.answer?'<b>✓</b>':''}</button>`).join('')}</div>${state.transferChecked?`<div class="transfer-feedback ${correct?'success':''}" role="status"><h3>${correct?'That’s the idea. Nicely applied.':'A useful place to pause.'}</h3><p>${escape(t.explanation)}</p></div><div class="form-actions"><button class="text-button" data-action="download">Download my report ↓</button><button class="button primary" data-action="finish">Back to my workspace ${icon('arrow')}</button></div>`:`<div class="form-actions"><button class="text-button" data-action="report">${icon('back')} My learning report</button><button class="button primary" data-action="check" ${state.transfer===null?'disabled':''}>Check my answer ${icon('check')}</button></div>`}</section><p class="prototype-note">Your ${state.transferChecked?'completed session is saved':'session will be saved'} on this browser only. No account needed.</p></div>`;}
-
-function progressPage(){return `<span class="eyebrow">SMALL STEPS ADD UP</span><h1>Your learning, taking shape<span>.</span></h1><p class="lead">A record of the times you chose understanding over guessing.</p><div class="stats-grid"><div><span>Completed sessions</span><b>${history.length}</b></div><div><span>Concepts explored</span><b>${new Set(history.map(x=>x.lesson)).size}<small> / 3</small></b></div><div><span>Transfer checks passed</span><b>${history.filter(x=>x.correct).length}<small> / ${history.length}</small></b></div></div>${history.length?`<div class="section-heading"><h2>Your recent sessions</h2><button class="text-button" data-action="clear">Clear history</button></div><div class="history-list">${history.map(h=>{const l=lessons.find(x=>x.id===h.lesson);return `<article class="history-item"><span class="subject-icon ${l.color}">${l.symbol}</span><div><h3>${l.title}</h3><p>${escape(new Date(h.date).toLocaleDateString(undefined,{month:'short',day:'numeric'}))} · Confidence ${h.confidence}/5 · Rubric ${h.score}%</p></div><span class="result-tag ${h.correct?'passed':''}">${h.correct?'Transfer applied':'Keep exploring'}</span></article>`;}).join('')}</div>`:`<div class="empty-state">${icon('leaf')}<h2>Your first lightbulb moment is waiting.</h2><p>Finish a lesson and a transfer check to start your learning history.</p><button class="button primary" data-action="home">Choose a lesson ${icon('arrow')}</button></div>`}<p class="prototype-note">History stores summaries only, not your written answers. Clearing browser data removes it.</p>`;}
-function aboutPage(){return `<span class="eyebrow">A SIMPLE IDEA, A DEEPER WAY TO LEARN</span><h1>Learn it. Teach it. Make it stick<span>.</span></h1><p class="lead">ExplainBack helps you notice the distance between “this looks familiar” and “I can explain why.”</p><div class="about-grid">${[['01','Check in','Choose a prepared lesson and rate your confidence from 1 to 5. There’s no right feeling to start with.'],['02','Teach it back','Explain the idea to Pip in your own words, then answer three follow-up questions. Live mode adapts the questions to your explanation.'],['03','Look for the gaps','Compare your confidence with transparent rubric coverage and inspect the lesson notes behind every criterion.'],['04','Apply the idea','Solve a new scenario and get a separately scored explanation. Save the completed session on your browser.']].map(([n,title,text])=>`<article class="about-card"><span>${n}</span><h2>${title}</h2><p>${text}</p></article>`).join('')}</div><section class="honesty-note">${icon('info')}<div><h2>An honest prototype</h2><p>ExplainBack offers two clearly labelled modes. Live local AI uses GPT-OSS through Ollama on your computer for adaptive questions and feedback. Offline mode uses authored questions and phrase-based rules. Both can make mistakes; the report is a prompt for reflection, not a validated assessment.</p><p>Lesson notes are concise, authored teaching material. Use your course materials for authoritative definitions and exam preparation. In live local mode, your answers go only to the local tutor on this computer. The hosted static preview offers offline practice.</p></div></section><button class="button primary" data-action="home">Find my first lightbulb moment ${icon('arrow')}</button>`;}
-
-function resetSession(){state={...state,page:'practice',stage:0,question:0,explanation:'',answers:[],questions:[],report:null,transfer:null,transferChecked:false,saved:false,busy:false,error:''};}
-function save(){if(state.saved)return;history.unshift({lesson:state.lesson,score:state.report.score,confidence:state.confidence,mode:state.mode,correct:state.transfer===lesson().transfer.answer,date:new Date().toISOString()});history=history.slice(0,30);try{localStorage.setItem('explainback-history',JSON.stringify(history));}catch{}state.saved=true;}
-function download(){const l=lesson();const lines=['ExplainBack — Learning report',l.title,state.report.source==='local-ai'?'Live local AI feedback; not a grade.':'Offline rule-based estimate; not a grade.',`Initial confidence: ${state.confidence}/5`,`Rubric coverage: ${state.report.score}%`,'',...state.report.criteria.map(x=>`${x.covered?'Evidence found':'Revisit'}: ${x.label}\n${x.feedback||x.correction}${x.evidence?'\nEvidence: '+x.evidence:''}`),'','Initial explanation:',state.explanation,...sessionQuestions().flatMap((q,i)=>['',q,state.answers[i]]),'',`Transfer answer: ${l.transfer.options[state.transfer]}`,`Correct answer: ${l.transfer.options[l.transfer.answer]}`,l.transfer.explanation];const url=URL.createObjectURL(new Blob([lines.join('\n')],{type:'text/plain;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=`explainback-${l.id}-report.txt`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
-function errorBanner(){return `<div class="error-banner" role="alert"><div><b>Pip needs a moment</b><p>${escape(state.error)}</p></div>${live()?'<button class="button secondary" data-action="offline">Use offline demo</button>':''}</div>`;}
-function busyPage(){return `<section class="thinking-panel" role="status" aria-live="polite"><span class="thinking-spark">✳</span><span class="eyebrow">A LITTLE ROOM TO THINK</span><h1>Pip is thinking it through<span>.</span></h1><p>${state.question===2&&state.stage===2?'Reviewing your explanation and answers against the lesson notes.':'Finding a useful question from your explanation and the lesson notes.'}</p><p class="prototype-note">Your local model is doing the work. This can take a minute.</p><button class="text-button" data-action="cancel-ai">Cancel and keep my answers</button></section>`;}
-async function runCoach(action,index,onSuccess){
-  const controller=new AbortController();activeRequest=controller;
-  state.busy=true;state.error='';render();
-  try{
-    const response=await fetch('/api/coach',{method:'POST',headers:{'Content-Type':'application/json'},signal:AbortSignal.any([controller.signal,AbortSignal.timeout(130000)]),body:JSON.stringify({action,lessonId:state.lesson,explanation:state.explanation,questionIndex:index,questions:state.questions.slice(0,index),answers:state.answers.slice(0,index)})});
-    const result=await response.json();
-    if(!response.ok)throw new Error(result.error||'The local tutor could not finish. Please retry.');
-    if(!controller.signal.aborted)onSuccess(result);
-  }catch(error){
-    if(!controller.signal.aborted)state.error=error.message==='Failed to fetch'?'The local tutor is unreachable. Check the local app and Ollama, then retry. Your answers are kept.':error.message;
-  }finally{
-    if(activeRequest===controller){state.busy=false;activeRequest=null;render();window.scrollTo({top:0,behavior:'smooth'});}
+const app = document.querySelector("#app");
+const draftKey = "explainback-draft-v2";
+function browserStorage(name) {
+  try {
+    return window[name];
+  } catch {
+    return null;
   }
 }
-async function nextLiveQuestion(index){
-  await runCoach('question',index,result=>{
-    state.questions=state.questions.slice(0,index);state.questions[index]=result.question;
-    state.answers=state.answers.slice(0,index);state.question=index;state.stage=2;
-  });
+const local = browserStorage("localStorage"),
+  draftStorage = browserStorage("sessionStorage");
+const draft = readStored(draftStorage, draftKey, null);
+let session = sessionValid(
+  draft,
+  lessons.map((l) => l.id),
+)
+  ? draft
+  : null;
+let history = readStored(local, "explainback-history-v2", []);
+if (!Array.isArray(history)) history = [];
+function validHistory(h) {
+  return (
+    h &&
+    typeof h.id === "string" &&
+    h.id.length <= 100 &&
+    typeof h.title === "string" &&
+    h.title.length <= 200 &&
+    Number.isInteger(h.passed) &&
+    h.passed >= 0 &&
+    h.passed <= 3 &&
+    [h.confidence, h.finalConfidence].every(
+      (n) => Number.isInteger(n) && n >= 1 && n <= 5,
+    ) &&
+    typeof h.transferPassed === "boolean" &&
+    ["local-ai", "reviewed"].includes(h.mode) &&
+    typeof h.date === "string" &&
+    Number.isFinite(new Date(h.date).getTime())
+  );
 }
-async function checkTutor(){
-  try{
-    const response=await fetch('/api/status',{signal:AbortSignal.timeout(5000)});
-    if(response.ok){const result=await response.json();availability={available:result.available===true,model:result.model,checking:false};}
-  }catch{}
-  availability.checking=false;
-  if(availability.available&&state.stage===0)state.mode='local-ai';
-  if(!state.busy)render(false);
+history = history.filter(validHistory);
+const ui = {
+  page: "practice",
+  selected: session?.lessonId || lessons[0].id,
+  available: false,
+  checking: true,
+  mode: "reviewed",
+  modeChosen: false,
+  busy: false,
+  elapsed: 0,
+  error: "",
+  storageWarning: "",
+  restored: !!session,
+  lab: {},
+};
+let active = null,
+  clock = null,
+  reconnectAttempt = 0;
+const currentLesson = () =>
+  lessons.find((l) => l.id === (session?.lessonId || ui.selected));
+
+function persistDraft() {
+  if (!session) return;
+  const result = writeStored(draftStorage, draftKey, session);
+  if (!result.ok) {
+    ui.storageWarning = result.message;
+    const warning = document.querySelector("#storage-warning");
+    if (warning) {
+      warning.hidden = false;
+      warning.textContent = result.message;
+    }
+    document.querySelectorAll(".save-status").forEach((node) => {
+      node.textContent = "Draft not saved. Keep this page open.";
+      node.setAttribute("role", "status");
+    });
+  }
 }
-function bind(){
-  root.querySelectorAll('[data-action]').forEach(el=>el.addEventListener('click',event=>{
-    const action=el.dataset.action;
-    if(el.tagName==='A')event.preventDefault();
-    if(state.busy&&action!=='cancel-ai')return;
-    if(action==='cancel-ai'){activeRequest?.abort();return;}
-    if(action==='toggle-mode'&&availability.available&&state.stage===0){state.mode=live()?'offline':'local-ai';render(false);}
-    if(action==='offline'){state.mode='offline';state.error='';state.questions=lesson().questions.map((q,i)=>state.questions[i]||q);render();}
-    if(action==='home'||action==='nav') {state.page=action==='home'?'practice':el.dataset.page;render();}
-    if(action==='lesson'){state.lesson=el.dataset.id;render(false);document.querySelector(`[data-action="lesson"][data-id="${state.lesson}"]`).focus({preventScroll:true});}
-    if(action==='confidence'){state.confidence=Number(el.dataset.value);render(false);document.querySelector(`[data-action="confidence"][data-value="${state.confidence}"]`).focus({preventScroll:true});}
-    if(action==='start'){state.stage=1;render();window.scrollTo({top:0,behavior:'smooth'});}
-    if(action==='sample'){const input=document.querySelector('#explanation');input.value=lesson().sample;state.explanation=input.value;document.querySelector('#char-count').textContent=`${input.value.length}/4000`;input.focus();}
-    if(action==='previous'){state.answers[state.question]=document.querySelector('#answer').value;if(state.question>0)state.question--;else state.stage=1;render();}
-    if(action==='leave')document.querySelector('#leave-dialog').showModal();
-    if(action==='cancel-leave')document.querySelector('#leave-dialog').close();
-    if(action==='confirm-leave'){resetSession();render();}
-    if(action==='transfer'){state.stage=4;render();window.scrollTo({top:0,behavior:'smooth'});}
-    if(action==='option'){state.transfer=Number(el.dataset.index);render(false);document.querySelector(`[data-action="option"][data-index="${state.transfer}"]`).focus({preventScroll:true});}
-    if(action==='check'&&state.transfer!==null&&!state.transferChecked){state.transferChecked=true;save();render(false);document.querySelector('.transfer-feedback').scrollIntoView({block:'nearest',behavior:'smooth'});}
-    if(action==='report'){state.stage=3;render();}
-    if(action==='finish'){resetSession();render();window.scrollTo({top:0,behavior:'smooth'});}
-    if(action==='download')download();
-    if(action==='clear'){history=[];try{localStorage.removeItem('explainback-history');}catch{}render();}
-  }));
-  document.querySelector('#explanation')?.addEventListener('input',event=>{state.explanation=event.target.value;document.querySelector('#char-count').textContent=`${event.target.value.length}/4000`;});
-  document.querySelector('#answer')?.addEventListener('input',event=>{state.answers[state.question]=event.target.value;});
-  document.querySelector('#explanation-form')?.addEventListener('submit',async event=>{event.preventDefault();state.explanation=document.querySelector('#explanation').value.trim();if(state.explanation.length<30){document.querySelector('#explanation').setCustomValidity('Write at least 30 non-whitespace characters so there is an idea to explore.');document.querySelector('#explanation').reportValidity();return;}state.answers=[];state.questions=[];if(live())await nextLiveQuestion(0);else{state.questions=[...lesson().questions];state.stage=2;state.question=0;render();}});
-  document.querySelector('#explanation')?.addEventListener('input',event=>event.target.setCustomValidity(''));
-  document.querySelector('#answer-form')?.addEventListener('submit',async event=>{event.preventDefault();const input=document.querySelector('#answer');state.answers[state.question]=input.value.trim();if(state.answers[state.question].length<10){input.setCustomValidity('Write at least 10 non-whitespace characters, even if you are unsure.');input.reportValidity();return;}if(live()){if(state.question<2)await nextLiveQuestion(state.question+1);else await runCoach('report',3,result=>{state.report=result;state.stage=3;});return;}if(state.question<2)state.question++;else{state.report=evaluate(lesson(),[state.explanation,...state.answers]);state.stage=3;}state.error='';render();window.scrollTo({top:0,behavior:'smooth'});});
-  document.querySelector('#answer')?.addEventListener('input',event=>event.target.setCustomValidity(''));
+
+function render(focus = false) {
+  const prior = document.activeElement;
+  const focusedId = prior?.id,
+    focusedTest = prior?.dataset?.testid;
+  const selection =
+    prior && "selectionStart" in prior
+      ? [prior.selectionStart, prior.selectionEnd]
+      : null;
+  let content;
+  const lesson = currentLesson();
+  if (ui.page === "history") content = historyView(history);
+  else if (ui.page === "about") content = aboutView();
+  else if (!session || ui.studio) content = home(ui, lessons, session);
+  else if (session.phase === "belief") content = beliefView(session, lesson);
+  else if (session.phase === "answer") content = answerView(session, lesson);
+  else if (session.phase === "review")
+    content = reviewView(session, lesson, ui);
+  else if (session.phase === "transfer")
+    content = transferView(session, lesson);
+  else content = summaryView(session, lesson, ui);
+  if (ui.confirmNew)
+    content += `<dialog id="new-session-dialog"><h2>${ui.pendingCardId ? "Open a saved card instead?" : "Start a fresh lesson?"}</h2><p>Your current unfinished session will be replaced. Completed learning cards stay in your browser.</p><div class="dialog-actions"><button class="button secondary" data-action="cancel-new">Keep my session</button><button class="button primary" data-action="confirm-new">${ui.pendingCardId ? "Open saved card" : "Start fresh"}</button></div></dialog>`;
+  app.innerHTML = shell(content, ui, session, lesson, history);
+  if (ui.confirmNew) document.querySelector("#new-session-dialog").showModal();
+  bindInputs();
+  if (focus) {
+    document.querySelector("#main").focus({ preventScroll: true });
+    window.scrollTo({ top: 0, behavior: "instant" });
+  } else {
+    const replacement = focusedId
+      ? document.getElementById(focusedId)
+      : focusedTest
+        ? document.querySelector(`[data-testid="${CSS.escape(focusedTest)}"]`)
+        : null;
+    replacement?.focus({ preventScroll: true });
+    if (selection && replacement?.setSelectionRange)
+      replacement.setSelectionRange(...selection);
+  }
 }
-render(false);
-checkTutor();
+
+async function checkConnection() {
+  if (ui.checking && reconnectAttempt > 0) return;
+  const attempt = ++reconnectAttempt;
+  ui.checking = true;
+  render();
+  try {
+    const response = await fetch("/api/status", {
+      signal: AbortSignal.timeout(6000),
+    });
+    const data = response.ok ? await response.json() : {};
+    ui.available = data.available === true;
+  } catch {
+    ui.available = false;
+  } finally {
+    if (attempt === reconnectAttempt) {
+      ui.checking = false;
+      if (!session && !ui.modeChosen)
+        ui.mode = ui.available ? "local-ai" : "reviewed";
+      render();
+    }
+  }
+}
+
+function stopFeedback() {
+  if (active) {
+    active.controller.abort();
+    active = null;
+  }
+  if (clock) clearInterval(clock);
+  clock = null;
+  ui.busy = false;
+  ui.elapsed = 0;
+}
+
+async function askPip(revision = false) {
+  stopFeedback();
+  const source = session,
+    index = source.step,
+    response = source.responses[index];
+  const answer = revision ? response.revision : response.answer;
+  const request = { controller: new AbortController(), id: source.id, index };
+  active = request;
+  response.feedback = null;
+  response.feedbackAnswer = answer;
+  response.feedbackForRevision = revision;
+  response.revising = revision;
+  ui.busy = true;
+  ui.elapsed = 0;
+  ui.error = "";
+  persistDraft();
+  render();
+  const started = Date.now();
+  clock = setInterval(() => {
+    ui.elapsed = Math.floor((Date.now() - started) / 1000);
+    const node = document.querySelector("#request-time");
+    if (node)
+      node.textContent = `${ui.elapsed}s elapsed · explanation ready below`;
+  }, 1000);
+  try {
+    const result = await fetch("/api/coach", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.any([
+        request.controller.signal,
+        AbortSignal.timeout(48000),
+      ]),
+      body: JSON.stringify({
+        action: "feedback",
+        lessonId: source.lessonId,
+        questionIndex: index,
+        answer,
+        attempt: response.attempt,
+        initialExplanation: source.belief,
+      }),
+    });
+    const data = await result.json();
+    if (!result.ok)
+      throw new Error(data.error || "Pip could not finish this review.");
+    if (
+      !["supported", "partial", "revisit"].includes(data.verdict) ||
+      typeof data.feedback !== "string" ||
+      data.feedback.length > 2000 ||
+      data.criterionIndex !== index ||
+      data.source !== "local-ai"
+    )
+      throw new Error("Pip returned feedback we could not verify.");
+    if (
+      active !== request ||
+      session?.id !== request.id ||
+      session.step !== index
+    )
+      return;
+    response.feedback = data;
+  } catch (error) {
+    if (active !== request || request.controller.signal.aborted) return;
+    ui.error =
+      error.name === "TimeoutError"
+        ? "Pip took too long to respond."
+        : error.message === "Failed to fetch"
+          ? "The local tutor is unreachable. Check Ollama or try the connection button."
+          : error.message;
+  } finally {
+    if (active === request) {
+      active = null;
+      if (clock) clearInterval(clock);
+      clock = null;
+      ui.busy = false;
+      persistDraft();
+      render();
+    }
+  }
+}
+
+function saveCompleted() {
+  const lesson = currentLesson(),
+    result = resultSummary(session, lesson);
+  const snapshot = structuredClone(session);
+  snapshot.persisted = true;
+  const entry = {
+    id: session.id,
+    title: lesson.title,
+    lessonId: lesson.id,
+    date: session.completedAt || new Date().toISOString(),
+    mode: session.mode,
+    confidence: session.confidence,
+    finalConfidence: session.finalConfidence,
+    passed: result.passed,
+    transferPassed: result.transferPassed,
+    session: snapshot,
+  };
+  const saved = appendHistory(local, entry);
+  history = saved.history.filter(validHistory).map((item) =>
+    item.id === entry.id
+      ? {
+          ...item,
+          persisted: saved.ok,
+          session: { ...snapshot, persisted: saved.ok },
+        }
+      : item,
+  );
+  session.persisted = saved.ok;
+  if (!saved.ok) ui.storageWarning = saved.message;
+  else ui.storageWarning = "";
+  persistDraft();
+}
+
+function downloadCard() {
+  const lesson = currentLesson(),
+    result = resultSummary(session, lesson);
+  const text = [
+    "EXPLAINBACK — A BELIEF, REBUILT",
+    lesson.title,
+    `${session.mode === "local-ai" ? "Local GPT-OSS coaching" : "Reviewed lesson mode"} · A learning record, not a grade.`,
+    "",
+    `Confidence before: ${session.confidence}/5. After: ${session.finalConfidence}/5.`,
+    `Quick checks: ${result.passed}/3. Transfer: ${result.transferPassed ? "correct" : "reviewed"}.`,
+    "",
+    "WHAT I THOUGHT",
+    session.belief,
+    ...lesson.steps.flatMap((step, index) => {
+      const response = session.responses[index];
+      return [
+        "",
+        `${index + 1}. ${step.title}`,
+        "Question: " + lesson.questions[index],
+        "My answer: " + response.answer,
+        "Correct explanation: " + step.answer,
+        "Why: " + step.why,
+        "Example: " + step.workedExample,
+        ...(response.feedback
+          ? [
+              "Pip reviewed this text: " +
+                (response.feedbackAnswer || response.answer),
+              "Pip: " + response.feedback.feedback,
+              "Evidence from this answer: " + response.feedback.quote,
+            ]
+          : []),
+        ...(response.revision ? ["My rewrite: " + response.revision] : []),
+        "Quick check: " + step.checkpoint.explanation,
+      ];
+    }),
+    "",
+    "TRANSFER",
+    lesson.transfer.question,
+    lesson.transfer.explanation,
+    "",
+    "AI feedback is formative and can misinterpret an answer. Lesson content is prepared; consult course materials for authoritative guidance.",
+  ].join("\n");
+  const url = URL.createObjectURL(
+    new Blob([text], { type: "text/plain;charset=utf-8" }),
+  );
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `explainback-${lesson.id}-learning-card.txt`;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function beginNew() {
+  stopFeedback();
+  session = newSession(ui.selected, ui.mode);
+  ui.studio = false;
+  ui.page = "practice";
+  ui.error = "";
+  ui.restored = false;
+  ui.lab = {};
+  persistDraft();
+  render(true);
+}
+
+function openCard(id) {
+  const item = history.find((h) => h.id === id);
+  if (
+    item?.session &&
+    sessionValid(
+      item.session,
+      lessons.map((l) => l.id),
+    )
+  ) {
+    stopFeedback();
+    session = structuredClone(item.session);
+    ui.page = "practice";
+    ui.studio = false;
+    ui.error = "";
+    render(true);
+  }
+}
+
+app.addEventListener("click", (event) => {
+  const target = event.target.closest("[data-action]");
+  if (!target || target.disabled) return;
+  event.preventDefault();
+  const action = target.dataset.action,
+    value = target.dataset.value;
+  if (action === "nav" || action === "home" || action === "back-studio") {
+    ui.page = action === "nav" ? target.dataset.page : "practice";
+    ui.studio = true;
+    render(true);
+    return;
+  }
+  if (action === "select-lesson") {
+    ui.selected = value;
+    render();
+    return;
+  }
+  if (action === "mode") {
+    if (value === "reviewed" || ui.available) {
+      ui.mode = value;
+      ui.modeChosen = true;
+    }
+    render();
+    return;
+  }
+  if (action === "reconnect") {
+    checkConnection();
+    return;
+  }
+  if (action === "dismiss-restored") {
+    ui.restored = false;
+    render();
+    return;
+  }
+  if (action === "start" || action === "new-session") {
+    if (session && !session.completed && action === "new-session") {
+      const dialog = document.querySelector("#new-session-dialog");
+      if (dialog) dialog.showModal();
+      else {
+        ui.confirmNew = true;
+        render();
+      }
+    } else beginNew();
+    return;
+  }
+  if (action === "resume") {
+    ui.studio = false;
+    ui.page = "practice";
+    render(true);
+    return;
+  }
+  if (action === "confirm-new") {
+    ui.confirmNew = false;
+    if (ui.pendingCardId) {
+      openCard(ui.pendingCardId);
+      ui.pendingCardId = null;
+    } else beginNew();
+    return;
+  }
+  if (action === "cancel-new") {
+    ui.confirmNew = false;
+    ui.pendingCardId = null;
+    render();
+    return;
+  }
+  if (action === "clear-history") {
+    if (removeStored(local, "explainback-history-v2")) history = [];
+    else
+      ui.storageWarning =
+        "Browser storage could not be cleared. The saved cards may still be on this browser.";
+    render();
+    return;
+  }
+  if (action === "open-card") {
+    if (session && !session.completed) {
+      ui.pendingCardId = value;
+      ui.confirmNew = true;
+      render();
+    } else openCard(value);
+    return;
+  }
+  if (!session) return;
+  const response = session.responses[session.step];
+  if (action === "confidence" || action === "final-confidence") {
+    session[action === "confidence" ? "confidence" : "finalConfidence"] =
+      Number(value);
+    persistDraft();
+    render();
+    return;
+  }
+  if (action === "sample") {
+    session.belief = currentLesson().sample;
+    persistDraft();
+    render();
+    document.querySelector("#belief-input")?.focus();
+    return;
+  }
+  if (action === "skip-ai") {
+    stopFeedback();
+    ui.error = "";
+    persistDraft();
+    render();
+    return;
+  }
+  if (action === "retry-feedback") {
+    askPip(response.feedbackForRevision === true);
+    return;
+  }
+  if (action === "checkpoint-option" && !response.checked) {
+    response.choice = Number(value);
+    persistDraft();
+    render();
+    return;
+  }
+  if (action === "check-understanding" && response.choice !== null) {
+    response.checked = true;
+    persistDraft();
+    render();
+    document
+      .querySelector(".check-result")
+      ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    return;
+  }
+  if (action === "next-step") {
+    if (!response.checked) return;
+    stopFeedback();
+    ui.error = "";
+    ui.lab = {};
+    advance(session);
+    persistDraft();
+    render(true);
+    return;
+  }
+  if (action === "edit-answer") {
+    stopFeedback();
+    session.phase = "answer";
+    ui.error = "";
+    persistDraft();
+    render(true);
+    return;
+  }
+  if (action === "save-revision") {
+    response.revised = true;
+    persistDraft();
+    target.textContent = "Rewrite kept ✓";
+    return;
+  }
+  if (action === "lab-yield") {
+    ui.lab.yielded = value === "true";
+    renderLab();
+    return;
+  }
+  if (action === "lab-streak") {
+    ui.lab.flips = Math.min((ui.lab.flips || 0) + 1, 99);
+    renderLab();
+    return;
+  }
+  if (action === "lab-reset") {
+    ui.lab.flips = 0;
+    renderLab();
+    return;
+  }
+  if (action === "lab-choice") {
+    ui.lab.chosen = Number(value);
+    renderLab();
+    return;
+  }
+  if (action === "transfer-option" && !session.transferChecked) {
+    session.transferChoice = Number(value);
+    persistDraft();
+    render();
+    return;
+  }
+  if (action === "check-transfer" && session.transferChoice !== null) {
+    session.transferChecked = true;
+    persistDraft();
+    render();
+    return;
+  }
+  if (action === "finish-session") {
+    if (!session.transferChecked) return;
+    stopFeedback();
+    session.completed = true;
+    session.completedAt = new Date().toISOString();
+    session.phase = "summary";
+    ui.error = "";
+    saveCompleted();
+    render(true);
+    return;
+  }
+  if (action === "retry-save") {
+    saveCompleted();
+    render();
+    return;
+  }
+  if (action === "download") {
+    downloadCard();
+    return;
+  }
+  if (action === "finish") {
+    stopFeedback();
+    session = null;
+    removeStored(draftStorage, draftKey);
+    ui.studio = true;
+    ui.restored = false;
+    if (!ui.modeChosen) ui.mode = ui.available ? "local-ai" : "reviewed";
+    render(true);
+  }
+});
+
+function renderLab() {
+  const panel = document.querySelector('[data-testid="prediction-lab"]');
+  const focused = document.activeElement?.id;
+  if (panel) panel.innerHTML = labView(session.lessonId, session.step, ui.lab);
+  if (focused) document.getElementById(focused)?.focus({ preventScroll: true });
+}
+
+app.addEventListener("input", (event) => {
+  if (!session) return;
+  const input = event.target;
+  input.setCustomValidity?.("");
+  if (input.id === "belief-input") {
+    session.belief = input.value;
+    const count = document.querySelector("#belief-count");
+    if (count) count.textContent = `${input.value.length}/4000`;
+  }
+  if (input.id === "answer-input") {
+    session.responses[session.step].answer = input.value;
+    const count = document.querySelector("#answer-count");
+    if (count) count.textContent = `${input.value.length}/2000`;
+  }
+  if (input.id === "revision-input")
+    session.responses[session.step].revision = input.value;
+  if (input.dataset.lab) {
+    ui.lab[input.dataset.lab] = Number(input.value);
+    renderLab();
+    return;
+  }
+  persistDraft();
+});
+
+function bindInputs() {
+  document
+    .querySelector("#belief-form")
+    ?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const input = document.querySelector("#belief-input");
+      if (input.value.trim().length < 20) {
+        input.setCustomValidity(
+          "Write at least 20 characters, even if you are unsure.",
+        );
+        input.reportValidity();
+        return;
+      }
+      session.belief = input.value.trim();
+      session.phase = "answer";
+      ui.restored = false;
+      persistDraft();
+      render(true);
+    });
+  document
+    .querySelector("#answer-form")
+    ?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const input = document.querySelector("#answer-input");
+      if (input.value.trim().length < 10) {
+        input.setCustomValidity(
+          "Write at least 10 characters so Pip has an idea to respond to.",
+        );
+        input.reportValidity();
+        return;
+      }
+      const response = session.responses[session.step];
+      response.answer = input.value.trim();
+      response.feedback = null;
+      response.checked = false;
+      response.choice = null;
+      session.phase = "review";
+      ui.error = "";
+      persistDraft();
+      render(true);
+      if (session.mode === "local-ai") askPip();
+    });
+  document
+    .querySelector("#revision-form")
+    ?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const input = document.querySelector("#revision-input"),
+        response = session.responses[session.step];
+      if (input.value.trim().length < 10) {
+        input.setCustomValidity(
+          "Write at least 10 characters for your rewrite.",
+        );
+        input.reportValidity();
+        return;
+      }
+      if (response.attempt >= 3 || ui.busy) return;
+      response.revision = input.value.trim();
+      response.attempt++;
+      response.revised = true;
+      persistDraft();
+      askPip(true);
+    });
+}
+
+window.addEventListener("pagehide", () => {
+  persistDraft();
+  stopFeedback();
+});
+render();
+checkConnection();
